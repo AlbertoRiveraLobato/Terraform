@@ -1,4 +1,3 @@
-
 variable "subscription_id" {
   type        = string
   description = "id of the subscription"
@@ -46,4 +45,9 @@ variable "client_secret" {
 variable "plat_rg_name" {
   type        = string
   description = "Name of the platform resource group"
+}
+
+variable "location" {
+  type        = string
+  description = "Ubicación donde se desplegarán los recursos"
 }

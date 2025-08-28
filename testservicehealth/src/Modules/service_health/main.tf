@@ -34,3 +34,16 @@ resource "azurerm_monitor_activity_log_alert" "service_health_alert" {
   depends_on = [azurerm_monitor_action_group.actiongroup]
 }
 
+resource "azurerm_storage_account" "storage" {
+  name                     = lower(replace("${var.base_name}${var.environment}sa", "-", ""))
+  resource_group_name      = var.plat_rg_name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+
+  tags = {
+    environment = var.environment
+    project     = var.base_name
+  }
+}
+
