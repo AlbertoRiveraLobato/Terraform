@@ -1,0 +1,138 @@
+trigger:
+- none
+
+parameters:
+
+- name: 'subscription_id'
+  displayName: 'Subscription ID for ServHealth deployment.'
+  type: string  
+
+- name: 'plat_rg_name'
+  displayName: 'Resource Group name for ServHealth deployment.'
+  type: string  
+
+- name: 'base_name'
+  displayName: 'Nombre base para los recursos.'
+  type: string  
+
+- name: 'environment'
+  displayName: 'Entorno'
+  type: string  
+
+- name: 'technical_contact_email'
+  displayName: 'mail de Tech lead'
+  type: string  
+
+
+stages:
+- stage: "Deployment"
+
+  jobs:
+  - job: 'ResourceDeployment'
+    displayName: 'Service Health deployment'
+    pool:
+      vmImage: ubuntu-latest
+    variables:
+    - group: 'creds-platform-build01-spn666'
+    - name: 'jsonParametersFile'
+      value: 'parameters.json'
+    - name: 'subscriptionId_deploy'
+      value: '${{ parameters.subscription_id }}'      
+    - name: 'terraformversion'
+      value: '1.9.7'
+    - name: 'workDirectory'
+      value: '$(Agent.BuildDirectory)/self'
+    - name: 'workDirectoryTF'
+      value: '$(workDirectory)/src'      
+        
+    steps:
+      - checkout: self
+        persistCredentials: true
+        path: 'self'
+        clean: true      
+
+      - task: PowerShell@2
+        displayName: 'Create JSON Parameters File'
+        inputs:
+          workingDirectory: '$(workDirectoryTF)'
+          targetType: 'inline'
+          pwsh: true
+          script: |
+            $JsonObject = @"
+            ${{ convertToJSON(parameters) }}
+            "@
+            $params = ($JsonObject | convertfrom-Json)
+            $params | convertTo-Json | Set-Content $(jsonParametersFile)
+            Get-Content $(jsonParametersFile)
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish Params JSON'
+        inputs:
+          targetPath: '$(workDirectoryTF)/$(jsonParametersFile)'
+          artifact: 'parametersFile'
+          publishLocation: 'pipeline'
+
+      - task: TerraformInstaller@1
+        displayName: 'Terraform install'
+        inputs:
+          terraformVersion: '$(terraformversion)'
+
+      - task: PowerShell@2
+        displayName: 'Terraform - init'
+        inputs:
+          targetType: 'inline'
+          pwsh: true          
+          script: 'terraform init'
+          workingDirectory: '$(workDirectoryTF)'
+        env:
+          ARM_CLIENT_ID: $(AZURE_CLIENT_ID)
+          ARM_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+          ARM_TENANT_ID: $(AZURE_TENANT_ID)
+          ARM_SUBSCRIPTION_ID: $(subscriptionId_deploy)
+
+
+      - task: PowerShell@2
+        displayName: 'Terraform - validate'
+        inputs:
+          targetType: 'inline'
+          pwsh: true
+          script: 'terraform validate'
+          workingDirectory: '$(workDirectoryTF)'
+
+      - task: PowerShell@2
+        displayName: 'Terraform - plan'
+        inputs:
+          targetType: 'inline'
+          pwsh: true
+          script: 'terraform plan -var-file="$(jsonParametersFile)" -var client_id=$(AZURE_CLIENT_ID) -var client_secret=$(AZURE_CLIENT_SECRET) -var subscription_id=$(subscriptionId_deploy) -var tenant_id=$(AZURE_TENANT_ID) -out=tfplan'
+          workingDirectory: '$(workDirectoryTF)'
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish TFplan'
+        inputs:
+          targetPath: '$(workDirectoryTF)/tfplan'
+          artifact: 'terraform'
+          publishLocation: 'pipeline'
+          mergeTestResults: true
+ 
+      - task: PowerShell@2
+        displayName: 'Terraform - apply'
+        inputs:
+          targetType: 'inline'
+          pwsh: true          
+          script: 'terraform apply -auto-approve -input=false tfplan'
+          workingDirectory: '$(workDirectoryTF)'
+
+      - task: PowerShell@2
+        displayName: 'Terraform - destroy'
+        enabled: true
+        condition: failed()
+        inputs:
+          targetType: 'inline'
+          pwsh: true          
+          script: |
+            Write-Host "Creating a plan to destroy resources..."
+            terraform plan -destroy -var-file="$(jsonParametersFile)" -var client_id=$(AZURE_CLIENT_ID) -var client_secret=$(AZURE_CLIENT_SECRET) -var subscription_id=$(subscriptionId_deploy) -var tenant_id=$(AZURE_TENANT_ID) -out=tfplandestroy
+            Write-Host "Executing the plan to destroy resources..."
+            terraform apply -auto-approve -input=false tfplandestroy
+          workingDirectory: '$(workDirectoryTF)'
